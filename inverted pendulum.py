@@ -45,65 +45,66 @@ f_discrete = ca.Function('f_discrete', [x, u, F_ext], [rk4_step(x, u, F_ext)])
 
 
 # MPC setup
+## Cost function
 Q = np.diag([10, 5])
 R = np.array([[0.1]])
 x_ref = np.array([[np.pi], [0]]) 
 
 opti = ca.Opti()
-X = opti.variable(2, N+1)
-U = opti.variable(1, N)
-F_ext_seq = opti.parameter(num_forces, N)
-X0 = opti.parameter(2, 1)
 
-## Cost function
+## Sequences
+X = opti.variable(2, N+1) # future states optimizer will compute 
+U = opti.variable(1, N) # future control efforts optimizer will compute
+F_ext = opti.parameter(num_forces, N) # future external forces
+X0 = opti.parameter(2, 1) # current  initial state
+
 obj = 0
 for k in range(N):
-    x_k = X[:, k]
-    u_k = U[:, k]
+    x_k = X[:, k] # predicted state at k
+    u_k = U[:, k] # control input at k
     x_err = x_k - x_ref.flatten()
-    obj += ca.mtimes([x_err.T, Q, x_err]) + ca.mtimes([u_k.T, R, u_k])
-opti.minimize(obj)
+    obj += ca.mtimes([x_err.T, Q, x_err]) + ca.mtimes([u_k.T, R, u_k]) # cost function
+opti.minimize(obj) # finally minimizing cost function
 
 ## Constraints
 opti.subject_to(X[:, 0] == X0)
 for k in range(N):
-    f_k = F_ext_seq[:, k]
+    f_k = F_ext[:, k]
     opti.subject_to(X[:, k+1] == f_discrete(X[:, k], U[:, k], f_k))
-opti.subject_to(opti.bounded(-5.0, U, 5.0))
-opti.solver('ipopt', {'ipopt.print_level': 0, 'print_time': 0})
+opti.subject_to(opti.bounded(-5, U, 5))
+opti.solver('ipopt', {'ipopt.print_level': 0, 'print_time': 0}) # supressed terminal outputs
 
-## Simulation
-x_mpc = np.array([np.pi, 0.0])
-x_uncontrolled = x_mpc.copy()
-X_log_mpc = [x_mpc.copy()]
+# Simulation & Plotting
+x_mpc = np.array([np.pi, 0]) # initial state 
+x_uncontrolled = x_mpc.copy() 
+X_log_mpc = [x_mpc.copy()] 
 X_log_uncontrolled = [x_uncontrolled.copy()]
 U_log = []
 
 for t in range(steps):
     # Random forces applied at different points
-    f_ext_t = 10.0 * (np.random.rand(num_forces) - 0.5)
-    f_ext_seq = np.tile(f_ext_t.reshape(-1, 1), (1, N))  # repeat same force across horizon
+    f_ext_t = 10 * (np.random.rand(num_forces) - 0.5)
+    f_ext = np.tile(f_ext_t.reshape(-1, 1), (1, N))  # repeat same force across horizon
 
     opti.set_value(X0, x_mpc)
-    opti.set_value(F_ext_seq, f_ext_seq)
+    opti.set_value(F_ext, f_ext)
     sol = opti.solve()
     u_mpc = sol.value(U[:, 0])
 
     # Applying first force
     x_mpc = f_discrete(x_mpc, u_mpc, f_ext_t).full().flatten()
-    x_uncontrolled = f_discrete(x_uncontrolled, 0.0, f_ext_t).full().flatten()
+    x_uncontrolled = f_discrete(x_uncontrolled, 0, f_ext_t).full().flatten()
 
     X_log_mpc.append(x_mpc.copy())
     X_log_uncontrolled.append(x_uncontrolled.copy())
     U_log.append(u_mpc)
 
-## Converting
 X_log_mpc = np.array(X_log_mpc)
 X_log_uncontrolled = np.array(X_log_uncontrolled)
 U_log = np.array(U_log)
 
 
-# Plotting
+## Plotting
 plt.figure()
 plt.plot(np.arange(steps+1)*dt, X_log_mpc[:, 0], label='theta (controlled)')
 plt.plot(np.arange(steps+1)*dt, X_log_uncontrolled[:, 0], label='theta (uncontrolled)', linestyle='--')
